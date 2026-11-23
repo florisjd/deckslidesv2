@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>DeckCraft review</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#f3f4f6;--ink:#111;--g:#0f6b4f;--bad:#8a1c14}
+*{box-sizing:border-box}body{font:14px system-ui,sans-serif;margin:0;background:var(--bg);color:var(--ink);height:100vh;display:grid;grid-template-rows:auto 1fr auto}
+header{background:#14231c;color:#fff;padding:8px 14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+button,input,select,textarea{font:inherit}button{padding:5px 10px;cursor:pointer}header button{background:#e5e7eb;border:0;border-radius:4px}
+#ws{display:grid;grid-template-columns:230px minmax(280px,1fr) minmax(300px,1.1fr) minmax(280px,1fr);gap:1px;background:#d1d5db;min-height:0}
+.pane{background:#fff;overflow:auto;padding:10px;min-height:0}.pane h3{margin:2px 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#555}
+.mod,.sc{padding:6px 8px;border-radius:6px;cursor:pointer;margin-bottom:4px;border:1px solid transparent}.mod.sel,.sc.sel{background:#e8f3ee;border-color:var(--g)}
+.chip{font-size:11px;padding:1px 7px;border-radius:9px;background:#e5e7eb}.chip.approved{background:#d1fae5;color:#065f46}.chip.stale{background:#fde68a;color:#78350f}
+.slide img{width:100%;max-width:300px;border:1px solid #ddd;border-radius:6px;display:block;margin:0 auto 8px}
+label.fld{display:block;margin:6px 0;font-size:12px;color:#555}label.fld input,label.fld textarea{width:100%;display:block;padding:5px;margin-top:2px}
+.sub{border-left:3px solid #ddd;padding-left:8px;margin:4px 0}.cnt{float:right;font-size:11px}.cnt.over{color:var(--bad)}
+.f{padding:4px 8px;border-radius:4px;margin:3px 0;font-size:13px}.f.error{background:#fde2e1;color:var(--bad)}.f.warn{background:#fff3cd;color:#664d03}.ok{color:var(--g);font-weight:600}
+.beat textarea{width:100%;min-height:44px;padding:5px;margin:3px 0}.src{font-size:13px;line-height:1.5;white-space:pre-wrap;background:#fafafa;padding:8px;border-radius:6px;max-height:40vh;overflow:auto}
+mark{background:#fde68a}.claimbtn{display:block;text-align:left;width:100%;margin:3px 0;background:#faf7ea;border:1px solid #e6d9a2;border-radius:5px}
+#tl{background:#fff;border-top:1px solid #d1d5db;padding:6px 10px;display:flex;height:46px;gap:2px;align-items:stretch;overflow:hidden}
+#tl div{background:#cfe7dc;border-radius:3px;font-size:11px;padding:2px 4px;overflow:hidden;white-space:nowrap;cursor:pointer;border:2px solid transparent}#tl div.sel{border-color:var(--g)}#tl div.approved{background:#86d3b0}
+dialog{border:0;border-radius:10px;max-width:560px;padding:16px}pre{white-space:pre-wrap;font-size:12px}
+</style></head><body>
+<header><b>DeckCraft review</b><span id="msg"></span>
+<span style="flex:1"></span>
+<button onclick="board()">Rebuild storyboard</button>
+<button onclick="regen()">Regenerate stale</button>
+<button onclick="$('#rev').click()">Upload revised source…</button><input id="rev" type="file" hidden onchange="revise(this.files[0])">
+<button onclick="exportAll()">Export MP4</button></header>
+<div id="ws">
+  <div class="pane" id="p-mods"></div>
+  <div class="pane slide" id="p-slide"></div>
+  <div class="pane" id="p-script"></div>
+  <div class="pane" id="p-src"></div>
+</div>
+<div id="tl" title="Estimated timeline"></div>
+<dialog id="dlg"><pre id="dlgtxt"></pre><button onclick="applyRev()">Apply update</button> <button onclick="$('#dlg').close()">Cancel</button></dialog>
+<script>
+const $=s=>document.querySelector(s);
+const api=async(p,o)=>{const r=await fetch("/api/v1"+p,o);const j=await r.json().catch(()=>({}));if(!r.ok)throw j;return j};
+const esc=s=>String(s??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const J=(m,b)=>({method:m,headers:{"Content-Type":"application/json"},body:JSON.stringify(b)});
+const q=new URLSearchParams(location.search);
+let S={pid:+(q.get("project")||1),mid:null,mods:[],rep:null,sel:0,schema:null,pending:null,claim:null};
+const say=m=>$("#msg").textContent=m;
+
+async function init(){S.schema=await api("/scene-schema");await loadMods()}
+async function loadMods(){S.mods=await api(`/projects/${S.pid}/modules`);if(S.mid==null&&S.mods.length)S.mid=S.mods[0].id;drawMods();if(S.mid!=null)await loadMod()}
+function drawMods(){$("#p-mods").innerHTML="<h3>Modules</h3>"+S.mods.map(m=>`<div class="mod ${m.id===S.mid?"sel":""}" onclick="pick(${m.id})">${m.number}. ${esc(m.title)}<br><span class="chip ${m.status}">${m.status}</span> <small>${m.claims} claims</small></div>`).join("")}
+async function pick(id){S.mid=id;S.sel=0;S.claim=null;drawMods();await loadMod()}
+async function loadMod(){S.rep=await api(`/modules/${S.mid}/scenes`);S.tl=await api(`/modules/${S.mid}/timeline`);draw()}
+const cur=()=>S.rep.scenes[S.sel];
+
+function draw(){drawSlide();drawScript();drawSrc();drawTl()}
+function defFor(kind){const d=S.schema.$defs||{};return Object.values(d).find(x=>x.properties&&x.properties.kind&&x.properties.kind.default===kind)||{properties:{}}}
+function field(path,val,sch,root){
+  const key=path.split(".").pop();
+  if(Array.isArray(val)){return `<div class="sub"><small>${esc(key)}</small>${val.map((v,i)=>field(`${path}.${i}`,v,sch&&sch.items,root)).join("")}</div>`}
+  if(val&&typeof val==="object"){return `<div class="sub">${Object.keys(val).map(k=>field(`${path}.${k}`,val[k],(sch&&sch.properties&&sch.properties[k])||{},root)).join("")}</div>`}
+  const max=sch&&sch.maxLength;const long=max>100;
+  const cnt=max?`<span class="cnt" data-max="${max}">${String(val).length}/${max}</span>`:"";
+  if(typeof val==="number")return `<label class="fld">${esc(key)}<input type="number" data-p="${path}" value="${val}"></label>`;
+  return `<label class="fld">${esc(key)}${cnt}${long?`<textarea data-p="${path}" rows="2" oninput="cnt(this)">${esc(val)}</textarea>`:`<input data-p="${path}" value="${esc(val)}" oninput="cnt(this)">`}</label>`}
+function cnt(el){const c=el.parentElement.querySelector(".cnt");if(c){c.textContent=el.value.length+"/"+c.dataset.max;c.className="cnt"+(el.value.length>+c.dataset.max?" over":"")}}
+function drawSlide(){
+  const s=cur();if(!s){$("#p-slide").innerHTML="<h3>Slide</h3><p>No scenes yet. Press “Rebuild storyboard”.</p>";return}
+  const def=defFor(s.data.kind),skip=["kind","claim_ids","notes"];
+  $("#p-slide").innerHTML=`<h3>Slide ${s.position+1}/${S.rep.scenes.length} · ${s.data.kind}</h3><img src="/api/v1/scenes/${s.id}/poster.png?v=${s.status}${Date.now()}">
+   <div>${S.rep.scenes.map((x,i)=>`<span class="sc ${i===S.sel?"sel":""}" style="display:inline-block" onclick="S.sel=${i};S.claim=null;draw()">${i+1}</span>`).join("")}
+   <button onclick="mv(-1)">◀ move</button><button onclick="mv(1)">move ▶</button><button onclick="del()">Delete</button></div>
+   <form id="frm">${Object.keys(s.data).filter(k=>!skip.includes(k)).map(k=>field(k,s.data[k],def.properties[k]||{},s.data)).join("")}</form>
+   <button onclick="saveData()">Save slide</button>`}
+function setPath(o,path,v){const ks=path.split(".");let t=o;ks.slice(0,-1).forEach(k=>t=t[k]);const l=ks[ks.length-1];t[l]=(typeof t[l]==="number")?+v:v}
+async function saveData(){const s=cur();const d=JSON.parse(JSON.stringify(s.data));document.querySelectorAll("#frm [data-p]").forEach(e=>setPath(d,e.dataset.p,e.value));
+  try{await api(`/scenes/${s.id}/data`,J("PUT",{data:d}));say("Slide saved");await loadMod()}catch(e){say("Rejected: "+JSON.stringify(e.detail).slice(0,160))}}
+function drawScript(){
+  const s=cur();if(!s){$("#p-script").innerHTML="";return}
+  $("#p-script").innerHTML=`<h3>Narration <span class="chip ${s.status}">${s.status}</span></h3>
+  ${s.beats.map((b,i)=>`<div class="beat"><textarea data-i="${i}" data-r="${b.reveal??""}">${esc(b.text)}</textarea></div>`).join("")}
+  <button onclick="saveBeats()">Save narration</button> <button onclick="approve()">Approve (A)</button>
+  <h3 style="margin-top:14px">Checks</h3>${s.findings.length?s.findings.map(f=>`<div class="f ${f.severity}">${f.kind}: ${esc(f.message)}</div>`).join(""):'<div class="ok">No findings</div>'}
+  ${S.rep.coverage.length?"<h3>Module coverage</h3>"+S.rep.coverage.map(f=>`<div class="f error">${esc(f.span)}</div>`).join(""):""}`}
+const beatsNow=()=>[...document.querySelectorAll("#p-script textarea")].map(t=>({text:t.value,reveal:t.dataset.r===""?null:+t.dataset.r}));
+async function saveBeats(){await api(`/scenes/${cur().id}/beats`,J("PUT",{beats:beatsNow()}));say("Narration saved");await loadMod()}
+async function approve(){try{await api(`/scenes/${cur().id}/beats`,J("PUT",{beats:beatsNow()}));await api(`/scenes/${cur().id}/approve`,{method:"POST"});say("Approved");await loadMods()}catch(e){say("Blocked by findings");await loadMod()}}
+async function drawSrc(){
+  const s=cur();if(!s){$("#p-src").innerHTML="";return}
+  let h="<h3>Source</h3>"+s.claims.map(c=>`<button class="claimbtn" onclick="showClaim(${c.id})">#${c.id} ${esc(c.text)}</button>`).join("");
+  if(S.claim){const c=S.claim;h+=`<p><b>${esc(c.heading)}</b> · page ${c.page}</p><div class="src">${esc(c.text.slice(0,c.start))}<mark>${esc(c.text.slice(c.start,c.end))}</mark>${esc(c.text.slice(c.end))}</div>`}
+  $("#p-src").innerHTML=h}
+async function showClaim(id){S.claim=await api(`/claims/${id}/source`);drawSrc()}
+function drawTl(){const T=S.tl;$("#tl").innerHTML=T.scenes.map((x,i)=>{const sc=S.rep.scenes[i];return `<div class="${sc&&sc.status==="approved"?"approved":""} ${i===S.sel?"sel":""}" style="flex:${x.duration}" onclick="S.sel=${i};S.claim=null;draw()">${i+1} ${x.kind} ${x.duration.toFixed(0)}s</div>`}).join("")+`<span style="padding:6px">≈${T.total.toFixed(0)}s</span>`}
+async function mv(d){await api(`/scenes/${cur().id}/move?direction=${d}`,{method:"POST"});S.sel=Math.max(0,Math.min(S.rep.scenes.length-1,S.sel+d));await loadMod()}
+async function del(){if(confirm("Delete this scene? (kept in the audit log)")){await api(`/scenes/${cur().id}`,{method:"DELETE"});S.sel=0;await loadMod()}}
+async function board(){if(confirm("Rebuild replaces every slide and narration edit in this module. Continue?")){await api(`/modules/${S.mid}/storyboard`,{method:"POST"});await loadMods()}}
+async function regen(){const r=await api(`/projects/${S.pid}/regenerate-stale`,{method:"POST"});say(`Regenerated ${r.regenerated.length}, retired ${r.retired.length}`);S.mid=null;await loadMods()}
+async function revise(f){if(!f)return;const src=(await api(`/projects/${S.pid}/sources`))[0];const fd=new FormData();fd.append("file",f);S.pending={src:src.id,file:f};
+  const r=await api(`/sources/${src.id}/revisions`,{method:"POST",body:fd});
+  $("#dlgtxt").textContent=`Added ${r.summary.added} · removed ${r.summary.removed} · changed ${r.summary.changed} · unchanged ${r.summary.unchanged}\n\n`+r.changes.map(c=>`${c.kind.toUpperCase()}  ${c.heading}`).join("\n")+"\n\nAffected modules become “stale”; hand-edited slides in them are replaced only when you regenerate.";$("#dlg").showModal()}
+async function applyRev(){const fd=new FormData();fd.append("file",S.pending.file);const r=await api(`/sources/${S.pending.src}/revisions?apply=true`,{method:"POST",body:fd});$("#dlg").close();say(`${r.stale_modules.length} module(s) stale`);await loadMods()}
+async function exportAll(){try{const r=await api(`/modules/${S.mid}/export`,{method:"POST"});say("Exporting…");poll(r.job_id)}catch(e){say("Approve every scene first")}}
+async function poll(j){const s=await api("/jobs/"+j);say(`${s.state} ${Math.round(s.progress*100)}% ${s.message}`);
+  if(s.state==="done")$("#msg").innerHTML+=` <a style="color:#9fe" href="/api/v1/modules/${S.mid}/files/mp4">download mp4</a>`;else if(s.state==="failed")say("Failed: "+s.error);else setTimeout(()=>poll(j),1500)}
+document.addEventListener("keydown",e=>{if(/INPUT|TEXTAREA/.test(e.target.tagName)||!S.rep)return;
+  if(e.key==="ArrowRight"&&S.sel<S.rep.scenes.length-1){S.sel++;S.claim=null;draw()}
+  if(e.key==="ArrowLeft"&&S.sel>0){S.sel--;S.claim=null;draw()}
+  if(e.key==="a"||e.key==="A")approve()});
+init().catch(e=>say("Load failed: "+JSON.stringify(e)));
+</script></body></html>

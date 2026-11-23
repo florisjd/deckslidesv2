@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+.cache/
+*.db
+*.db-*
+
+# generated data and videos (contain user documents) and large model files
+deckcraft/out/
+out/
+models/
+*.mp4
+.pytest_cache/
