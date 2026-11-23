@@ -12,6 +12,7 @@ from typing import Protocol
 import numpy as np
 import soundfile as sf
 
+from ..platform import unthrottle
 from ..script.beats import Beat
 from ..script.spoken import to_spoken
 
@@ -28,6 +29,7 @@ class KokoroProvider:
 
     def __init__(self, model_dir: Path, lang: str = "en-us"):
         from kokoro_onnx import Kokoro
+        unthrottle()
         self._k = Kokoro(str(model_dir / "kokoro-v1.0.onnx"), str(model_dir / "voices-v1.0.bin"))
         self.lang = lang
 

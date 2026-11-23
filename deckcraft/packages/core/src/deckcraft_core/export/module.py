@@ -5,7 +5,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..render.scene_render import SceneRenderer, spec_hash
+from ..render.scene_render import RenderPool, SceneRenderer, spec_hash
 from ..script.beats import Beat
 from ..speech.tts import SpeechService, master_audio, measure_loudness
 from .music import add_music_bed
@@ -31,7 +31,8 @@ def _title(scene: dict) -> str:
     return scene["kind"].title()
 
 
-def export_module(scenes: list[tuple[dict, list[Beat]]], theme: dict, speech: SpeechService, renderer: SceneRenderer,
+def export_module(scenes: list[tuple[dict, list[Beat]]], theme: dict, speech: SpeechService,
+                  renderer: SceneRenderer | RenderPool,
                   out_dir: Path, name: str, orientation: str = "portrait", fps: int = 30,
                   intro: tuple[dict, list[Beat]] | None = None, outro: tuple[dict, list[Beat]] | None = None,
                   music: Path | None = None, card_hold: float = 3.0, sub_lang: str = "eng") -> ExportResult:

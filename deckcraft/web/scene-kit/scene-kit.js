@@ -99,6 +99,17 @@
   }
 
   const seek = (t) => { tl.seek(t, false); return true; };
+  function frameKey(t) {
+    if (!tl) return null;
+    const bits = [];
+    for (const tw of tl.getChildren(true, true, false)) {
+      if (tw.totalDuration() <= 0) continue;
+      const s = tw.startTime(), e = tw.endTime();
+      if (t >= s - 1e-4 && t <= e + 1e-4) return null;
+      bits.push(t < s ? "0" : "1");
+    }
+    return "S:" + bits.join("");
+  }
   async function ready() {
     await document.fonts.ready;
     const imgs = [...document.images];
@@ -144,5 +155,5 @@
     return { findings: out, emptyRatio: empty };
   }
 
-  window.SceneKit = { render, seek, ready, lint, kinds: Object.keys(LAYOUTS) };
+  window.SceneKit = { render, seek, ready, lint, frameKey, kinds: Object.keys(LAYOUTS) };
 })();

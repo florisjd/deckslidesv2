@@ -18,6 +18,7 @@ class Settings:
     music_path: Path | None = None         # optional music bed (user-supplied file)
     enable_translation: bool = False       # feature flag (plan 18: multilingual later)
     pptx_rasteriser: str = "auto"          # auto | libreoffice | powerpoint | fallback
+    render_workers: int = 3                # parallel Chromium workers in RenderPool
 
     @property
     def db_path(self) -> Path: return self.root / "library.db"

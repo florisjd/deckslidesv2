@@ -7,7 +7,7 @@ from . import memory
 from .blobs import BlobStore
 from .db.models import AuditLog, Claim, Module, ModuleClaim, Project, SceneRow, Section
 from .export.module import export_module
-from .render.scene_render import SceneRenderer, load_theme
+from .render.scene_render import RenderPool, load_theme
 from .scenes import ImageScene, parse_scene
 from .i18n import is_english, tts_params, translate_beats, translate_scene
 from .script.beats import Beat, anchor_reveals, write_script_rule
@@ -171,7 +171,7 @@ def run_export(sf, settings, module_id: int, progress=lambda p, m="": None, prov
         voice = settings.voice
     provider = provider or KokoroProvider(settings.model_dir, lang=lang_code)
     speech = SpeechService(provider, settings.root / "audio-cache", voice=voice)
-    with SceneRenderer(blobs=BlobStore(settings.blob_dir)) as r:
+    with RenderPool(workers=settings.render_workers, blobs=BlobStore(settings.blob_dir)) as r:
         res = export_module(pairs, load_theme(settings.theme), speech, r,
                             settings.export_dir / f"module-{module_id}", name, orientation,
                             intro=intro, outro=outro, music=music or settings.music_path,
