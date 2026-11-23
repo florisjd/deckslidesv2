@@ -1,6 +1,7 @@
 """Render scenes with Playwright's Chromium (seek-and-screenshot) and encode with ffmpeg.
 Colour is explicit: RGB -> BT.709 limited range, tagged (fixes untagged yuvj420p, plan P8)."""
 from __future__ import annotations
+import base64
 import hashlib
 import json
 import shutil
@@ -48,11 +49,33 @@ class LintResult:
         return [f for f in self.findings if f["severity"] == "error"]
 
 
+def _img_mime(data: bytes) -> str:
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/png"
+
+
+def hydrate_scene(scene: dict, blobs) -> dict:
+    """Populate image_url as a data URI from the blob store for ImageScene rendering."""
+    if scene.get("kind") == "image" and not scene.get("image_url") and scene.get("image_sha"):
+        sha = scene["image_sha"]
+        if blobs is not None and blobs.has(sha):
+            raw = blobs.get(sha)
+            b64 = base64.b64encode(raw).decode("ascii")
+            return {**scene, "image_url": f"data:{_img_mime(raw)};base64,{b64}"}
+    return scene
+
+
 class SceneRenderer:
-    def __init__(self):
+    def __init__(self, blobs=None):
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch()
         self._html = _page_html()
+        self._blobs = blobs
 
     def close(self):
         self._browser.close()
@@ -62,6 +85,7 @@ class SceneRenderer:
     def __exit__(self, *a): self.close()
 
     def _open(self, scene: dict, theme: dict, orientation: str, duration: float, reveals: dict | None = None):
+        scene = hydrate_scene(scene, self._blobs)
         portrait = orientation != "landscape"
         page = self._browser.new_page(viewport={"width": 1080 if portrait else 1920, "height": 1920 if portrait else 1080})
         page.set_content(self._html)

@@ -17,6 +17,7 @@ class Settings:
     voice: str = "af_heart"
     music_path: Path | None = None         # optional music bed (user-supplied file)
     enable_translation: bool = False       # feature flag (plan 18: multilingual later)
+    pptx_rasteriser: str = "auto"          # auto | libreoffice | powerpoint | fallback
 
     @property
     def db_path(self) -> Path: return self.root / "library.db"

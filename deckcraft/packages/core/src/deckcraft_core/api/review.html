@@ -63,7 +63,7 @@ function field(path,val,sch,root){
 function cnt(el){const c=el.parentElement.querySelector(".cnt");if(c){c.textContent=el.value.length+"/"+c.dataset.max;c.className="cnt"+(el.value.length>+c.dataset.max?" over":"")}}
 function drawSlide(){
   const s=cur();if(!s){$("#p-slide").innerHTML="<h3>Slide</h3><p>No scenes yet. Press “Rebuild storyboard”.</p>";return}
-  const def=defFor(s.data.kind),skip=["kind","claim_ids","notes"];
+  const def=defFor(s.data.kind),skip=["kind","claim_ids","notes","image_sha"];
   $("#p-slide").innerHTML=`<h3>Slide ${s.position+1}/${S.rep.scenes.length} · ${s.data.kind}</h3><img src="/api/v1/scenes/${s.id}/poster.png?v=${s.status}${Date.now()}">
    <div>${S.rep.scenes.map((x,i)=>`<span class="sc ${i===S.sel?"sel":""}" style="display:inline-block" onclick="S.sel=${i};S.claim=null;draw()">${i+1}</span>`).join("")}
    <button onclick="mv(-1)">◀ move</button><button onclick="mv(1)">move ▶</button><button onclick="del()">Delete</button></div>

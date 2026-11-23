@@ -4,14 +4,15 @@ from dataclasses import asdict
 from pathlib import Path
 
 from . import memory
+from .blobs import BlobStore
 from .db.models import AuditLog, Claim, Module, ModuleClaim, Project, SceneRow, Section
 from .export.module import export_module
 from .render.scene_render import SceneRenderer, load_theme
-from .scenes import parse_scene
+from .scenes import ImageScene, parse_scene
 from .i18n import is_english, tts_params, translate_beats, translate_scene
 from .script.beats import Beat, anchor_reveals, write_script_rule
 from .speech.tts import KokoroProvider, SpeechService
-from .storyboard.build import C, build_module_scenes, validate_scene
+from .storyboard.build import C, build_module_scenes, clean_title, validate_scene
 from .verify.checks import check_number_spoken, check_scene, coverage_report, locale_lint
 
 
@@ -21,6 +22,21 @@ def module_claims(s, module_id: int) -> list[C]:
     return [C(r.id, r.kind, r.modality, r.text, r.lead or "", r.item or "") for r in rows]
 
 
+def _module_sections(s, module_id: int) -> list[tuple[Section, list[int]]]:
+    rows = (s.query(Section, Claim.id)
+            .join(Claim, Claim.section_id == Section.id)
+            .join(ModuleClaim, ModuleClaim.claim_id == Claim.id)
+            .filter(ModuleClaim.module_id == module_id)
+            .order_by(Section.position, Claim.id)
+            .all())
+    grouped: dict[int, tuple[Section, list[int]]] = {}
+    for sec, cid in rows:
+        if sec.id not in grouped:
+            grouped[sec.id] = (sec, [])
+        grouped[sec.id][1].append(cid)
+    return list(grouped.values())
+
+
 def storyboard(sf, module_id: int, llm=None, style_guide: str = "") -> int:
     with sf() as s:
         mod = s.get(Module, module_id)
@@ -28,7 +44,19 @@ def storyboard(sf, module_id: int, llm=None, style_guide: str = "") -> int:
         claims = module_claims(s, module_id)
         by_id = {c.id: c for c in claims}
         series = (s.get(Project, mod.project_id).series_name or "").strip()
-        scenes = build_module_scenes(mod.title, claims, eyebrow=series or "Training")
+        sec_pairs = _module_sections(s, module_id)
+        if sec_pairs and any(sec.image_sha for sec, _ in sec_pairs):
+            scenes = [
+                ImageScene(
+                    image_sha=sec.image_sha,
+                    caption=clean_title(sec.heading_path.split(" > ")[-1])[:120],
+                    claim_ids=cids,
+                    notes=sec.notes or "",
+                )
+                for sec, cids in sec_pairs if sec.image_sha
+            ]
+        else:
+            scenes = build_module_scenes(mod.title, claims, eyebrow=series or "Training")
         s.query(SceneRow).filter(SceneRow.module_id == module_id).delete()
         for i, sc in enumerate(scenes):
             beats = None
@@ -143,7 +171,7 @@ def run_export(sf, settings, module_id: int, progress=lambda p, m="": None, prov
         voice = settings.voice
     provider = provider or KokoroProvider(settings.model_dir, lang=lang_code)
     speech = SpeechService(provider, settings.root / "audio-cache", voice=voice)
-    with SceneRenderer() as r:
+    with SceneRenderer(blobs=BlobStore(settings.blob_dir)) as r:
         res = export_module(pairs, load_theme(settings.theme), speech, r,
                             settings.export_dir / f"module-{module_id}", name, orientation,
                             intro=intro, outro=outro, music=music or settings.music_path,

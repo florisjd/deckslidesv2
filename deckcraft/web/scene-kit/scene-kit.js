@@ -43,7 +43,9 @@
   .two{display:grid;grid-template-columns:repeat(var(--cols),1fr);gap:.8em}.col{display:flex;flex-direction:column;gap:.4em}
   .ch{font-weight:800;font-size:.75em;color:var(--primary)}.dont .ch{color:var(--danger)}.dont .mk{background:var(--danger)}
   .myth .ct{color:var(--danger)}.fact .ct{color:var(--primary)}
-  .img{max-width:100%;max-height:70%;object-fit:contain;border-radius:var(--radius)}
+  #content[data-layout="image"]{align-items:center}
+  .img{max-width:100%;max-height:70%;width:auto;height:auto;flex:0 1 auto;min-height:0;object-fit:contain;border-radius:var(--radius)}
+  #content[data-layout="image"] .img:only-child{max-height:92%}
   `;
 
   let tl = null, cur = null;
@@ -68,11 +70,13 @@
     const inner = () => { let top = 1e9, bot = 0; for (const ch of el.children) { const r = ch.getBoundingClientRect(); top = Math.min(top, r.top); bot = Math.max(bot, r.bottom); } return bot - top; };
     const pad = parseFloat(getComputedStyle(el).paddingTop) * 2;
     const avail = H - pad;
-    let lo = 0.7, hi = 3.6;
+    const isImg = el.dataset.layout === "image";
+    let lo = isImg ? 0.85 : 0.7, hi = isImg ? 1.6 : 3.6;
+    const fillLimit = avail * (isImg ? 0.92 : 0.82);
     for (let i = 0; i < 14; i++) {
       const mid = (lo + hi) / 2;
       el.style.setProperty("--k", mid);
-      const over = inner() > avail * 0.82 || el.scrollWidth > W + 1 || [...el.querySelectorAll("*")].some((n) => n.getBoundingClientRect().right > W - pad / 2 + 1);
+      const over = inner() > fillLimit || el.scrollWidth > W + 1 || [...el.querySelectorAll("*")].some((n) => n.getBoundingClientRect().right > W - pad / 2 + 1);
       if (over) hi = mid; else lo = mid;
     }
     el.style.setProperty("--k", lo);
@@ -95,7 +99,19 @@
   }
 
   const seek = (t) => { tl.seek(t, false); return true; };
-  const ready = () => document.fonts.ready.then(() => true);
+  async function ready() {
+    await document.fonts.ready;
+    const imgs = [...document.images];
+    if (imgs.length) {
+      await Promise.all(imgs.map((img) => (
+        img.complete
+          ? Promise.resolve()
+          : new Promise((res) => { img.onload = res; img.onerror = res; })
+      ).then(() => (img.decode ? img.decode().catch(() => {}) : undefined))));
+      fit();
+    }
+    return true;
+  }
 
   // Deterministic linter: overflow, min font size, WCAG contrast, empty-area ratio.
   function lum([r, g, b]) { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); }
@@ -112,6 +128,10 @@
       const own = [...n.childNodes].some((c) => c.nodeType === 3 && c.textContent.trim());
       const r = n.getBoundingClientRect();
       if (r.width && (r.right > sr.right - pad / 2 + 1 || r.left < sr.left + pad / 2 - 1 || r.bottom > sr.bottom - pad / 2 + 1 || r.top < sr.top + pad / 2 - 1)) out.push({ severity: "error", kind: "overflow", message: `<${n.tagName.toLowerCase()} class="${n.className}"> leaves safe area` });
+      if (n.tagName === "IMG") {
+        if (n.naturalWidth === 0) out.push({ severity: "error", kind: "missing-image", message: "Slide image failed to load" });
+        else { top = Math.min(top, r.top); bot = Math.max(bot, r.bottom); }
+      }
       if (!own) continue;
       top = Math.min(top, r.top); bot = Math.max(bot, r.bottom);
       const cs = getComputedStyle(n), fs = parseFloat(cs.fontSize);

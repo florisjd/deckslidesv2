@@ -26,7 +26,7 @@
 
 *Legend: `[x]` built and covered by tests · `[~]` partly built (what is missing is stated) · `[ ]` not built · `[-]` dropped by a decision in §18. Last updated 2026-11-23. Keep this section current: tick items off as they are completed.*
 
-**Where things are:** the new app lives in `deckcraft/` (`packages/core` Python, `web/scene-kit` JS, `themes/`). `uv run --package deckcraft-core pytest` runs the suite (70 tests). `uv run --package deckcraft-core python serve_preview.py <data_dir>` serves the review workspace at `http://127.0.0.1:8765/review`. Verified end to end on two real documents (a welcome/values guide and an obligation-heavy HR guide), each producing a narrated, captioned MP4.
+**Where things are:** the new app lives in `deckcraft/` (`packages/core` Python, `web/scene-kit` JS, `themes/`). `uv run --package deckcraft-core pytest` runs the suite (75 tests). `uv run --package deckcraft-core python serve_preview.py <data_dir>` serves the review workspace at `http://127.0.0.1:8765/review`. Verified end to end on two real documents (a welcome/values guide and an obligation-heavy HR guide), each producing a narrated, captioned MP4.
 
 ### Phase 0 — Safety net and baseline
 - [x] `git init` and a committed history
@@ -40,8 +40,8 @@
 - [x] Durable job queue: retries, cancel, restart recovery of stale `running` jobs
 - [ ] Alembic migrations (tables are created with `create_all`; schema changes need a fresh database)
 - [ ] SSE event stream (clients poll `/jobs/{id}`)
-- [x] Ingest: PDF (pypdfium2, real font size/weight for headings, header/footer removal by repetition, line reflow, bullet and emoji cleanup), Markdown/text, section splitting
-- [ ] Ingest: DOCX, PPTX, scanned PDFs / OCR, Docling, tables, TOC stripping
+- [x] Ingest: PDF (pypdfium2, real font size/weight for headings, header/footer removal by repetition, line reflow, bullet and emoji cleanup), DOCX (headings, lists, tables, TOC stripping), PPTX (text, tables, speaker notes, LibreOffice/PowerPoint COM/Pillow rasterisation), Markdown/text, zip-safety checks, section splitting
+- [ ] Ingest: scanned PDFs / OCR, Docling, PDF table extraction and PDF TOC stripping
 - [x] Section-level source diff (`diff_sections`) with rename detection
 - [x] Claims with verbatim-quote validation and char spans (rule-based); modality, kind, risk score
 - [x] Lead-in + list handling: items inherit the lead-in's obligation ("team members **must**: ..."), `This includes:` attaches to the previous sentence, claims keep `lead` and `item` separately
@@ -62,7 +62,7 @@
 - [ ] Visual regression suite (only linter + determinism hash tests)
 - [x] Colour-correct encode (BT.709, limited range, tagged, faststart); cache key includes a scene-kit hash
 - [ ] RenderPool / frame-range sharding (one browser, one page at a time)
-- [ ] `ImageScene` importer for existing decks
+- [x] `ImageScene` importer for existing decks (PPTX rasterised slides + speaker notes to beats, blob hydration, missing-image lint)
 
 ### Phase 3 — Script, verify, voice, export (cut-over slice)
 - [x] Beat-based narration: rule writer + optional Ollama writer (falls back to rules if it drifts); reveals tied to beats
@@ -100,7 +100,7 @@
 - [-] Tauri shell, installer, auto-update, multi-user workflows, cloud LLM provider, HTML5 player, SPFx / SharePoint, SCORM/cmi5, quizzes
 
 ### Known gaps worth doing next
-Takeaways slide repeats earlier content · local-model module naming · DOCX/PPTX ingest · listen-through review of audio and pacing · UI for branding, style guide, translation and music · Alembic migrations · RenderPool for faster export.
+Takeaways slide repeats earlier content · local-model module naming · listen-through review of audio and pacing · UI for branding, style guide, translation and music · Alembic migrations · RenderPool for faster export.
 
 ---
 

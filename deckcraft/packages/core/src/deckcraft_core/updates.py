@@ -12,7 +12,7 @@ from pathlib import Path
 from .blobs import BlobStore
 from .db.models import AuditLog, Claim, Module, ModuleClaim, SceneRow, Section, Source, SourceVersion
 from .ingest.document import SectionDoc, ingest
-from .understand.claims import extract_claims
+from .understand.claims import ClaimDraft, extract_claims
 
 _norm = lambda s: re.sub(r"\s+", " ", s).strip().lower()
 
@@ -89,7 +89,8 @@ def _load(blobs: BlobStore, sha: str, filename: str):
         return ingest(p)
 
 
-def revise_source(sf, blobs: BlobStore, source_id: int, data: bytes, apply: bool = True) -> dict:
+def revise_source(sf, blobs: BlobStore, source_id: int, data: bytes, apply: bool = True,
+                  pptx_rasteriser: str = "auto") -> dict:
     sha = blobs.put(data) if apply else None
     with sf() as s:
         src = s.get(Source, source_id)
@@ -98,7 +99,7 @@ def revise_source(sf, blobs: BlobStore, source_id: int, data: bytes, apply: bool
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / filename
         p.write_bytes(data)
-        doc = ingest(p)
+        doc = ingest(p, pptx_rasteriser=pptx_rasteriser)
     diff = diff_sections(old, doc.sections)
     report = {"summary": diff.summary, "changes": [
         {"kind": c.kind, "heading": c.heading, "similarity": round(c.similarity, 2)} for c in diff.changes if c.kind != "unchanged"],
@@ -109,8 +110,13 @@ def revise_source(sf, blobs: BlobStore, source_id: int, data: bytes, apply: bool
     stale: set[int] = set()
     with sf() as s:
         mod_of_claim: dict[int, int] = {}
-        for mc in s.query(ModuleClaim).join(Module).filter(Module.project_id == project_id):
+        sec_to_mods: dict[int, set[int]] = defaultdict(set)
+        for mc, c_sec_id in (s.query(ModuleClaim, Claim.section_id)
+                             .join(Claim, Claim.id == ModuleClaim.claim_id)
+                             .join(Module, Module.id == ModuleClaim.module_id)
+                             .filter(Module.project_id == project_id)):
             mod_of_claim[mc.claim_id] = mc.module_id
+            sec_to_mods[c_sec_id].add(mc.module_id)
 
         def attach(section_id: int, claim_row: Claim, modules_hint: Counter):
             if modules_hint:
@@ -122,6 +128,13 @@ def revise_source(sf, blobs: BlobStore, source_id: int, data: bytes, apply: bool
 
         for ch in diff.changes:
             if ch.kind == "unchanged":
+                nd = doc.sections[ch.new_index]
+                if nd.image_bytes is not None:
+                    sec = s.get(Section, ch.old_id)
+                    new_sha = blobs.put(nd.image_bytes)
+                    if new_sha != (sec.image_sha or "") or (nd.notes or "") != (sec.notes or ""):
+                        sec.image_sha, sec.notes = new_sha, nd.notes
+                        stale.update(sec_to_mods.get(sec.id, ()))
                 continue
             if ch.kind == "removed":
                 for c in s.query(Claim).filter(Claim.section_id == ch.old_id):
@@ -136,9 +149,22 @@ def revise_source(sf, blobs: BlobStore, source_id: int, data: bytes, apply: bool
                 sec = s.get(Section, ch.old_id)
                 sec.heading_path, sec.text, sec.level = nd.heading_path[:500], nd.text, nd.level
                 sec.page_start, sec.page_end, sec.position = nd.page_start, nd.page_end, ch.new_index
+                notes_changed = (nd.notes or "") != (sec.notes or "")
+                sec.notes = nd.notes
+                if notes_changed and nd.image_bytes is not None:
+                    stale.update(sec_to_mods.get(sec.id, ()))
+                if nd.image_bytes is not None:
+                    new_sha = blobs.put(nd.image_bytes)
+                    if new_sha != (sec.image_sha or ""):
+                        sec.image_sha = new_sha
+                        stale.update(sec_to_mods.get(sec.id, ()))
                 old_claims = {_norm(c.text): c for c in s.query(Claim).filter(Claim.section_id == sec.id)}
                 hint = Counter(mod_of_claim[c.id] for c in old_claims.values() if c.id in mod_of_claim)
-                fresh = {_norm(c.text): c for c in extract_claims(nd.text, nd.page_start)}
+                extracted = extract_claims(nd.text, nd.page_start)
+                if not extracted and nd.image_bytes is not None and nd.text.strip():
+                    q = nd.text.strip()
+                    extracted = [ClaimDraft("info", "info", q, q, 0, len(q), nd.page_start, 0.1)]
+                fresh = {_norm(c.text): c for c in extracted}
                 for k, c in old_claims.items():
                     if k not in fresh:                       # claim removed or reworded
                         if c.id in mod_of_claim:
@@ -156,12 +182,17 @@ def revise_source(sf, blobs: BlobStore, source_id: int, data: bytes, apply: bool
                         s.flush()
                         attach(sec.id, row, hint)
             elif ch.kind == "added":
+                img_sha = blobs.put(nd.image_bytes) if nd.image_bytes is not None else ""
                 sec = Section(source_id=source_id, position=ch.new_index, heading_path=nd.heading_path[:500], level=nd.level,
-                              text=nd.text, page_start=nd.page_start, page_end=nd.page_end)
+                              text=nd.text, page_start=nd.page_start, page_end=nd.page_end, image_sha=img_sha, notes=nd.notes)
                 s.add(sec)
                 s.flush()
+                extracted = extract_claims(nd.text, nd.page_start)
+                if not extracted and nd.image_bytes is not None and nd.text.strip():
+                    q = nd.text.strip()
+                    extracted = [ClaimDraft("info", "info", q, q, 0, len(q), nd.page_start, 0.1)]
                 rows = []
-                for f in extract_claims(nd.text, nd.page_start):
+                for f in extracted:
                     row = Claim(section_id=sec.id, kind=f.kind, modality=f.modality, text=f.text, quote=f.quote,
                                 page=f.page, char_start=f.char_start, char_end=f.char_end, risk=f.risk, lead=f.lead, item=f.item)
                     s.add(row)

@@ -51,7 +51,7 @@ def create_app(settings: Settings | None = None, run_worker: bool = True) -> Fas
     queue = JobQueue(sf)
 
     def ingest_handler(job: Job, ctx):
-        res = process_source(sf, blobs, job.payload["source_id"], ctx.progress)
+        res = process_source(sf, blobs, job.payload["source_id"], ctx.progress, pptx_rasteriser=st.pptx_rasteriser)
         ctx.progress(1.0, f"{res['claims']} claims, {res['modules']} modules")
 
     queue.register("ingest_source", ingest_handler)
@@ -163,7 +163,7 @@ def create_app(settings: Settings | None = None, run_worker: bool = True) -> Fas
             if not row:
                 raise HTTPException(404)
             data = row.data
-        with SceneRenderer() as r:
+        with SceneRenderer(blobs=blobs) as r:
             return Response(r.poster(data, load_theme(st.theme), orientation), media_type="image/png")
 
     @app.post("/api/v1/modules/{mid}/export")
@@ -225,7 +225,10 @@ def create_app(settings: Settings | None = None, run_worker: bool = True) -> Fas
         data = await file.read()
         if len(data) > st.max_upload_mb * 1024 * 1024:
             raise HTTPException(413, "File too large")
-        return revise_source(sf, blobs, sid, data, apply=apply)
+        try:
+            return revise_source(sf, blobs, sid, data, apply=apply, pptx_rasteriser=st.pptx_rasteriser)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
 
     @app.post("/api/v1/projects/{pid}/regenerate-stale")
     def regen(pid: int):

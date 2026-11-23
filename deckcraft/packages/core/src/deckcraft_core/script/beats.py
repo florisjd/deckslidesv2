@@ -75,6 +75,32 @@ def lead_texts(cited: list[C], n: int, negate: bool = False) -> list[str] | None
     return [sentence_core(cited[0].text), *rest]
 
 
+def notes_to_beats(notes: str, fallback: list[str] | None = None) -> list[Beat]:
+    """Turn slide speaker notes into bounded narration beats (one sentence per beat, <=300 chars)."""
+    chunks: list[str] = []
+    if notes and notes.strip():
+        for raw in re.split(r"(?<=[.!?])\s+|\n+", notes.strip()):
+            s = re.sub(r"^\s*(?:[-•●▪◦*]|\d+[.)])\s*", "", raw).strip()
+            if s:
+                chunks.append(s)
+    if not chunks:
+        chunks = [s.strip() for s in (fallback or []) if s and s.strip()] or ["Here is the slide."]
+
+    bounded: list[str] = []
+    for s in chunks:
+        while len(s) > 260:
+            cut = s.rfind(",", 120, 260)
+            if cut < 0:
+                cut = s.rfind(" ", 120, 260)
+            if cut < 0:
+                cut = 260
+            bounded.append(s[:cut].rstrip(" ,;:-") + ".")
+            s = s[cut:].lstrip(" ,;:-")
+        if s:
+            bounded.append(s)
+    return [Beat(text=t, reveal=0 if i == 0 else None) for i, t in enumerate(bounded)]
+
+
 def write_script_rule(scene: Base, claims: dict[int, C]) -> list[Beat]:
     k = scene.kind
     d = scene.model_dump()
@@ -112,7 +138,8 @@ def write_script_rule(scene: Base, claims: dict[int, C]) -> list[Beat]:
     if k == "spotlight":
         return [Beat(text=d["term"] + "."), Beat(text=d["definition"])]
     if k == "image":
-        return [Beat(text=d["caption"] or "Here is the slide.")]
+        fb = [sentence_core(c.text) + "." for c in cited] or ([d["caption"]] if d.get("caption") else None)
+        return notes_to_beats(d.get("notes", ""), fb)
     return [Beat(text=d.get("headline", "") + "."), *([Beat(text=d["body"])] if d.get("body") else [])]
 
 
@@ -131,12 +158,13 @@ def write_script_llm(llm, scene: Base, claims: dict[int, C], style_guide: str = 
     """style_guide may include the house style plus retrieved few-shot examples (memory.render_prompt_block)."""
     cited = "\n".join(f"- {claims[c].text}" for c in scene.claim_ids if c in claims)
     shown = PAGE_SUFFIX.sub("", scene.model_dump_json(exclude={"claim_ids", "notes"})) if False else re.sub(r"\s*\(\d+/\d+\)", "", scene.model_dump_json(exclude={"claim_ids", "notes"}))
+    notes_blk = f"Speaker notes:\n{scene.notes}\n\n" if scene.kind == "image" and scene.notes else ""
     msgs = [
         {"role": "system", "content": (
             f"You write short narration for a workplace training video. Use {locale} English spelling. "
             "Use ONLY facts in the source claims; never add rules, numbers, names or change must/should strength. "
             f"One sentence per beat, 2-6 beats, friendly and direct. {style_guide}")},
-        {"role": "user", "content": f"Slide ({scene.kind}):\n{shown}\n\nSource claims:\n{cited}\n\nWrite the narration beats."},
+        {"role": "user", "content": f"Slide ({scene.kind}):\n{shown}\n\n{notes_blk}Source claims:\n{cited}\n\nWrite the narration beats."},
     ]
     return llm.generate(msgs, BeatList).beats
 

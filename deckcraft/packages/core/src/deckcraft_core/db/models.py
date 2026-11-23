@@ -45,6 +45,8 @@ class Section(Base):
     text: Mapped[str] = mapped_column(Text)
     page_start: Mapped[int] = mapped_column(Integer, default=1)
     page_end: Mapped[int] = mapped_column(Integer, default=1)
+    image_sha: Mapped[str] = mapped_column(String(64), default="")
+    notes: Mapped[str] = mapped_column(Text, default="")
 
 
 class Claim(Base):
@@ -131,6 +133,16 @@ class AuditLog(Base):
     detail: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+def _ensure_columns(engine) -> None:
+    """Add new columns to pre-existing SQLite tables until Alembic migrations exist."""
+    with engine.begin() as conn:
+        cols = {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(section)").fetchall()}
+        if "image_sha" not in cols:
+            conn.exec_driver_sql("ALTER TABLE section ADD COLUMN image_sha VARCHAR(64) DEFAULT ''")
+        if "notes" not in cols:
+            conn.exec_driver_sql("ALTER TABLE section ADD COLUMN notes TEXT DEFAULT ''")
+
+
 def make_session_factory(db_path):
     db_path.parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False, "timeout": 15})
@@ -142,4 +154,5 @@ def make_session_factory(db_path):
 
     from .. import memory  # noqa: F401  (registers style tables)
     Base.metadata.create_all(engine)
+    _ensure_columns(engine)
     return sessionmaker(engine, expire_on_commit=False)
